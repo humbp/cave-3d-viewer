@@ -29,17 +29,23 @@ jobs:
       - name: Déterminer la version et le version.code
         id: ver
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VER_NAME: ${{ inputs.version_name }}
+          INPUT_VER_CODE: ${{ inputs.version_code }}
         run: |
-          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
-            RAW_TAG="${{ github.ref_name#v }}"
+          if [[ "$EVENT_NAME" == "push" && "$REF_TYPE" == "tag" ]]; then
+            RAW_TAG="${REF_NAME#v}"
             VER_NAME="$RAW_TAG"
             IFS='.' read -r MAJ MIN PAT <<< "$RAW_TAG"
             MAJ=${MAJ:-0}; MIN=${MIN:-0}; PAT=${PAT:-0}
             VER_CODE=$(( (10#${MAJ} * 10000) + (10#${MIN} * 100) + 10#${PAT} ))
             [[ "$VER_CODE" -le 0 ]] && VER_CODE=1
           else
-            VER_NAME="${{ inputs.version_name }}"
-            VER_CODE="${{ inputs.version_code }}"
+            VER_NAME="$INPUT_VER_NAME"
+            VER_CODE="$INPUT_VER_CODE"
           fi
           echo "name=$VER_NAME" >> "$GITHUB_OUTPUT"
           echo "code=$VER_CODE" >> "$GITHUB_OUTPUT"
@@ -70,20 +76,27 @@ jobs:
           pip install --upgrade pip cython==0.29.36 buildozer setuptools wheel
 
       - name: Appliquer la version dans buildozer.spec et main.py
+        id: apply_ver
         shell: bash
+        env:
+          VER_NAME: ${{ steps.ver.outputs.name }}
+          VER_CODE: ${{ steps.ver.outputs.code }}
         run: |
-          sed -i "s/^version = .*/version = ${{ steps.ver.outputs.name }}/" buildozer.spec
-          sed -i "s/^version\.code = .*/version.code = ${{ steps.ver.outputs.code }}/" buildozer.spec
-          sed -i "s/0.1.0-dev/${{ steps.ver.outputs.name }} (build ${{ steps.ver.outputs.code }})/" main.py
+          sed -i "s/^version = .*/version = $VER_NAME/" buildozer.spec
+          sed -i "s/^version\.code = .*/version.code = $VER_CODE/" buildozer.spec
+          sed -i "s/0.1.0-dev/$VER_NAME (build $VER_CODE)/" main.py
 
       - name: Compiler l'APK Debug avec Buildozer
         run: buildozer android debug
 
       - name: Renommer l'APK avec la version
         shell: bash
+        env:
+          VER_NAME: ${{ steps.ver.outputs.name }}
+          VER_CODE: ${{ steps.ver.outputs.code }}
         run: |
           mkdir -p dist_apk
-          cp bin/*-debug.apk "dist_apk/Cave3DTopo-v${{ steps.ver.outputs.name }}-code${{ steps.ver.outputs.code }}.apk"
+          cp bin/*-debug.apk "dist_apk/Cave3DTopo-v${VER_NAME}-code${VER_CODE}.apk"
           ls -lh dist_apk/
 
       - name: Publier l'APK en Artifact GitHub
@@ -98,3 +111,4 @@ jobs:
         with:
           files: dist_apk/*.apk
           generate_release_notes: true
+          
