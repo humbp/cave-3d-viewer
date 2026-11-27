@@ -1,6 +1,0 @@
-# Pour lancer l'application ou les tests sur ordinateur (pas utilisé pour l'APK)
-kivy
-numpy
-ezdxf
-svgpathtools
-pytest
