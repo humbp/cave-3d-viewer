@@ -1,0 +1,86 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # nécessaire pour ranger les fichiers du zip dans le dépôt
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # Si cave-3d-viewer.zip est présent à la racine : on le décompresse, on place
+      # les fichiers avec leurs dossiers (sauf .github), on commit puis on supprime le zip.
+      - name: Ranger les fichiers du zip
+        id: unpack
+        run: |
+          if [ -f cave-3d-viewer.zip ]; then
+            mkdir /tmp/unz
+            unzip -q cave-3d-viewer.zip -d /tmp/unz
+            SRC=$(find /tmp/unz -maxdepth 2 -name buildozer.spec -printf '%h\n' | head -n 1)
+            if [ -z "$SRC" ]; then echo "buildozer.spec introuvable dans le zip"; exit 1; fi
+            rsync -a --exclude='.github/' "$SRC"/ ./
+            git rm -q --cached cave-3d-viewer.zip
+            rm cave-3d-viewer.zip
+            git config user.name "github-actions"
+            git config user.email "github-actions@users.noreply.github.com"
+            git add -A
+            git commit -m "Ranger les fichiers du projet depuis le zip"
+            git push
+          fi
+          if [ -f buildozer.spec ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; else echo "ready=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Rien à compiler pour l'instant
+        if: steps.unpack.outputs.ready != 'true'
+        run: echo "Envoyez cave-3d-viewer.zip à la racine du dépôt, le build démarrera tout seul."
+
+      - uses: actions/setup-python@v5
+        if: steps.unpack.outputs.ready == 'true'
+        with:
+          python-version: "3.11"
+
+      - name: Tests (sans Kivy)
+        if: steps.unpack.outputs.ready == 'true'
+        run: |
+          pip install numpy ezdxf svgpathtools pytest
+          python -m pytest -q tests
+
+      - name: Cache Buildozer (SDK, NDK, python-for-android)
+        if: steps.unpack.outputs.ready == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+          key: buildozer-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-
+
+      - name: Dépendances système
+        if: steps.unpack.outputs.ready == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git zip unzip openjdk-17-jdk autoconf automake libtool pkg-config \
+            zlib1g-dev libncurses-dev cmake libffi-dev libssl-dev ccache
+
+      - name: Installer Buildozer
+        if: steps.unpack.outputs.ready == 'true'
+        run: |
+          pip install --upgrade pip
+          pip install buildozer cython
+
+      - name: Compiler l'APK (debug)
+        if: steps.unpack.outputs.ready == 'true'
+        run: buildozer -v android debug
+
+      - uses: actions/upload-artifact@v4
+        if: steps.unpack.outputs.ready == 'true'
+        with:
+          name: cave3dviewer-apk
+          path: bin/*.apk
